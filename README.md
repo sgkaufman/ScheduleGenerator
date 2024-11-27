@@ -4,3 +4,6 @@ The input csv file is hard-coded at line 6. An output file name is hard-coded at
 The output file is a fragment of the LaTeX file that creates the Albuquerque-area printed schedule.
 It is run when something like this commmand line is typed: 
 `/usr/bin/env perl Schedule.pl > SocorroScheduleOut.txt`
+
+The output file created by the output redirection in the above example command line
+is a printout of the data structure that hold the meeting data.
