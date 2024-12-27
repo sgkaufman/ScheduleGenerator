@@ -6,4 +6,4 @@ It is run when something like this commmand line is typed:
 `/usr/bin/env perl Schedule.pl > SocorroScheduleOut.txt`
 
 The output file created by the output redirection in the above example command line
-is a printout of the data structure that hold the meeting data.
+is a printout of the data structure that holds the meeting data.
