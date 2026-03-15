@@ -1,11 +1,25 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
+use strict;
+use warnings;
 use v5.36;
 use experimental 'signatures';
 
-#open(my $scheduleIn,  "<", "SingleMeeting4.csv")
-open( my $scheduleIn,  "<", "SocorroMeetingSchedule.csv" )
+# Check that at least one filename was provided
+if (@ARGV != 2) {
+    die "Usage: $0 <input_csv_file> <LaTeX_output_file>\n";
+}
+
+for my $filename (@ARGV) {
+    unless (-e $filename) {
+        warn "Warning: '$filename' does not exist, skipping\n";
+        next;
+    }
+}
+
+open( my $scheduleIn,  "<", $ARGV[0])
     or die "Can't open input file: $!";
-open( my $laTeX_output, ">", "LaTeX_Socorro.txt" )
+
+open( my $laTeX_output, ">", $ARGV[1])
     or die "Can't open output file $!\n";
 
 my $verbose = 0;
@@ -16,15 +30,15 @@ my @day_list = ( "Sunday", "Monday", "Tuesday", "Wednesday",
 my $meeting;
 
 my %meeting_keys = (
-    0 => "time",
-    2 => "day",
-    3 => "name",
+    0 => "name",
+    1 => "day",
+    2 => "time",
+    3 => "types",
     4 => "location",
     5 => "address",
-    6 => "city",
-    8 => "types"
+    6 => "city"
     );
-# Remaining fields:
+# Remaining fields, assumed deleted
 # "notes", "loc_notes", "",
 # "group", "district", "", "website", "", "mail_address"];
 # Venmo,Square,Paypal,Email,Phone,Group Notes,
@@ -34,7 +48,7 @@ my %meeting_keys = (
 # Last Contact,Conference URL,Conference URL Notes,
 # Conference Phone,Conference Phone Notes,Author,Slug,
 # Data Source,Data Source Name,Updated,ID];
- 
+
 # The %day_hash has a list of each meeting occuring on that day.
 # Each list contains references to lists for the fields of interest
 # for the schedule.
@@ -50,15 +64,12 @@ my %day_hash = (
     );
 
 # Loop over each line, each of which corresponds to a meeting
-
+my $remainder = "";
 while ($meeting = <$scheduleIn>) {
-    my @meeting_keys = ("time", "day", "name", "location", "address", "city", "types");
-    my $remainder;
-    my $next = "";
+    my @meeting_keys = ("name", "day", "time", "types", "location", "address", "city" );
 
+    print "$meeting\n";
     my @pair_list = ();
-
-    $remainder = "";
 
     # The first three fields aren't quoted. Peel those off and save the rest.
     # Then break up the rest with double-quote pairs or empty fields,
@@ -69,14 +80,14 @@ while ($meeting = <$scheduleIn>) {
     next if ($meeting =~ /^$/);
 
     # Strip off the first three fields
-    if ( $meeting =~ /(\d+:\d+ [AP]M),([^,]*),([^,]*),(.*)/) {
-	push (@pair_list, ["time", $1]);
-	push (@pair_list, ["day", $3]);
-	print "Start Time: $1\nEnd Time: $2\nDay: $3 \n" if $verbose;
-    
+    if ( $meeting =~ /([^,]*),([^,]*),(\d+:\d+ [AP]M),(.*)/) {
+    push (@pair_list, ["name", $1]);
+    push (@pair_list, ["day", $2]);
+	push (@pair_list, ["time", $3]);
+	print "Name: $1\nDay: $2\nStart Time: $3\n" if $verbose;
+
 	$remainder = $4;
-	
-	# from Style Guide: 'print "Starting analysis\n" if $verbose;'
+
 	print "Remainder of meeting is $remainder\n\n" if $verbose;
     }
     else {
@@ -87,85 +98,74 @@ while ($meeting = <$scheduleIn>) {
     my $field_cnt = 3;
 
     # On to remainder!
-    # Assertions: The time, end time, and day fields have been removed
+    # Assertions: The name, day, and time fields have been removed
     # from $remainder, along with the commas ending those fields.
-    while ($remainder and $field_cnt < 50) {
+    #
+    # The "Types" field isn't quoted if it only has a single type.
+    # The "Address" field is quoted.
+    # We first try to match for a quoted field at the line beginning.
+    # Then we try for an unquoted field, with a comma termination.
+    # Finally we match anything; it's not enclosed in quotes,
+    # and it's not comma terminated, so it must be the final field.
+    #
+    while ($remainder) {
+        my $field = "";
 
-	if (substr($remainder,0,3) eq '"",') {
-	    # eat up empty quoted field and field-ending comma
-	    $remainder = substr($remainder, 3);
-	    print "First branch.  Field $field_cnt: blank\n" if $verbose;
+        if ( $remainder =~ /^\"([^\"]*)\",(.+)/ ) { # Quoted field match
+            $field = $1;
+            print "First branch\n" if $verbose;
+            print "Field $field_cnt: $field\n" if $verbose;
+            print "remainder: $2\n\n" if $verbose;
+            $remainder = $2;
+        } elsif ( $remainder =~ /^([^\",]+),(.+)/ ) { # comma-terminated match
+            $field = $1;
+            print "Second branch\n" if $verbose;
+            print "Field $field_cnt: $1\n" if $verbose;
+            print "remainder: $2\n\n" if $verbose;
+            $remainder = $2;
+        }
+        elsif ( $remainder =~ /(.+)/ ) {
+            $field = $1;
+            print "Third branch\n" if $verbose;
+            print "Field $field_cnt: $1\n" if $verbose;
+            $remainder = "";
+            }
 
-	} elsif (substr($remainder,0,1) eq "," ) {
-	    # eat up a comma
-	    $remainder = substr($remainder,1);
-	    # print "$remainder\n";
-	    print "Second branch. Field $field_cnt: blank\n" if $verbose;;
-
-	} elsif ($remainder =~ /^"(\d\d\d\d)"$/ ) {
-	    # Meeting ID at end-of-line, quoted
-	    $next = $1;
-	    $remainder = "";
-	    print "Third branch. Field $field_cnt: $next\n" if $verbose;
-
-	} elsif ($remainder =~ /^"([^"]+)",(.+)/) {
-	    # Not an empty field, so collect full field without quotes.
-	    $next = $1;
-	    $remainder = $2;
-	    print "Fourth (quoted field) branch. Field $field_cnt: $next\n"
-		if $verbose;
-      	} elsif ($remainder =~ /^([^,]+),(.+)/) {
-	    # Not an empty field, no quotes, so collect full field.
-	    $next = $1;
-	    $remainder = $2;
-	    print "Fifth (unquoted field) branch. Field $field_cnt: $next\n"
-		if $verbose;
-	}
-	elsif ($remainder =~ /^(\d\d\d\d)$/) {
-	    # Meeting ID at end-of-line, unquoted
-	    $next = $1;
-	    $remainder = "";
-	    print "Sixth branch. Unquoted meeting ID. Field $field_cnt: $next\n"
-		if $verbose;
-
-	} else {
-	    # Trouble!
-	    printf "Dread Seventh Branch. remainder: $remainder\n" if $verbose;
-	    printf "field_cnt: $field_cnt\n" if $verbose;
-	}
-	# print "Contents of hash at $field_cnt: $meeting_keys{$field_cnt}\n";
-	
-	if (defined($meeting_keys{$field_cnt}) ) {
-	    push (@pair_list, [$meeting_keys{$field_cnt}, $next]);
-	}
-	  
-	$field_cnt++;
+        if (defined($meeting_keys{$field_cnt}) ) {
+	        push (@pair_list, [$meeting_keys{$field_cnt}, $field]);
+        }
+        $field_cnt++;
     }
-    
+    # End of parsing a single meeting.
+    # Print out the @pair_list constructed from the meeting
+    print "Meeting pair_list:\n";
+    for my $p ( @pair_list ) {
+        print "\t@$p[0]: @$p[1]\n";
+    }
+    print "---------------------------------------\n";
+
     # end of meeting processing. Results are in @pair_list.
     # Create the hash of meeting elements from @pair_list.
-    my $href = {};       # the hash 
+    my $href = {};       # the hash
     my $day_name;        # meeting day (e.g., 'Sunday')
     my $list_ref;        # reference to the list in %day_hash for the day
-   
-    # Create the hash
+
+    # Create the hash for the meeting
     for my $i ( 0 .. $#pair_list ) {
-	${$href}{$pair_list[$i][0]} = $pair_list[$i][1];
+    	${$href}{$pair_list[$i][0]} = $pair_list[$i][1];
     }
 
     # Push the hash onto the end of the list for that day
     $day_name = ${$href}{day};
     $list_ref = $day_hash{$day_name};
-    push @{$list_ref}, $href;    
+    push @{$list_ref}, $href;
 }
-
 close ($scheduleIn);
 
-# Finished reading the file. Meeting hashes are in %day_hash.
+# Finished reading the file. All Meeting hashes are in %day_hash.
 # First handle the location and code translations, then
 # 1. Place an asterisk before hybrid meetings
-# 2. Not which meeting are online only, and do not print for LaTeX.
-
+# 2. Note which meeting are online only, and do not print for LaTeX.
 
 for my $day ( @day_list ) {
 
@@ -174,59 +174,77 @@ for my $day ( @day_list ) {
     print $laTeX_output "\\hline\\multicolumn{3}{|l|}{\\cellcolor[HTML]{EFEFEF}\\textbf{ $uc_day }} \\\\ \\hline\n";
 
     my $list_ref = $day_hash{$day};
-    for my $i ( 0 .. $#{$list_ref} ) { # for each meeting hash
-	# Handle the location code
-	my $online_flg = 0;
-	my $loc = ${$list_ref}[$i]{location};
-	${$list_ref}[$i]{location} = translate_loc( $loc );
-	if ( length( ${$list_ref}[$i]{location} ) == 0) {
-	    $online_flg = 1;
-	}
+    for my $i ( 0 .. $#{$list_ref} ) { # for each meeting hash in the day
+	    # Handle the location code
+	    my $online_flg = 0;
+	    my $loc = ${$list_ref}[$i]{location};
+	    if ( defined $loc && $loc ne "" ) {         # Check that the location isn't empty
+	        ${$list_ref}[$i]{location} = translate_loc( $loc );
+	        if ( ${$list_ref}[$i]{types} =~ /Location Temporarily Closed/
+	            || ${$list_ref}[$i]{location} eq ''     # the translate_loc subroutine can empty the location field
+	            || ${$list_ref}[$i]{location} =~ /Rio Rancho/) {
+	        $online_flg = 1;
+		    }
+	    }
+	    else {
+	        $online_flg = 1;
+        }
 
-	# Handle the meeting type codes
-	my $type = ${$list_ref}[$i]{types};
-	my $codes = translate_types( $type );
-	${$list_ref}[$i]{types} = $codes;
-	if ( $codes =~ /OM/ ) {
-	    my $name = ${$list_ref}[$i]{name};
-	    ${$list_ref}[$i]{name} = "*" . $name;
-	}
+        # The following handles the odd case where the location says "Albuquerque"
+        # but it should be "Isleta Club". We check that with the address field.
+        if ( ${$list_ref}[$i]{location} eq "Albuquerque"
+            && ${$list_ref}[$i]{address} =~ /^1829 Isleta/ ) {
+            ${$list_ref}[$i]{location} = "isl";
+        }
 
-	# now print the modified meeting hash
-	print "Meeting $i:\n";
-	for my $key ( keys ${$list_ref}[$i]->%* ) {
-	    print "$key => ${$list_ref}[$i]{$key}\n";
-	}
-	print "Online Only Meeting? : $online_flg\n";
-	print "--------------------------------\n";
-	
-	my $m_name = ${$list_ref}[$i]{name};
-	my $am_pm = lc( ${$list_ref}[$i]{time} );
-	my $types = ${$list_ref}[$i]{types};
-	$types =~ s/, $//;
-	$types =~ s/\s//g;
-	if ($types =~ "Albuquerque") {
-	    print "TYPE IS ALBUQUERQUE\n";
-	}
+	    # Handle the meeting type codes
+	    my $type = ${$list_ref}[$i]{types};
+	    my $codes = translate_types( $type );
+	    ${$list_ref}[$i]{types} = $codes;
+	    if ( $codes =~ /OM/ ) {
+	        my $name = ${$list_ref}[$i]{name};
+	        ${$list_ref}[$i]{name} = "*" . $name;
+	    }
 
-	my $loc_code = ${$list_ref}[$i]{location};
-	# Print to LaTeX file if meeeting is not online-only
-	if ( $online_flg == 0 ) {
+	    # now print the modified meeting hash
+	    print "Meeting $i:\n";
+	    for my $key ( keys ${$list_ref}[$i]->%* ) {
+	        print "$key => ${$list_ref}[$i]{$key}\n";
+	    }
+	    print "Online Only Meeting? : $online_flg\n";
+	    print "--------------------------------\n";
+
+	    my $m_name = ${$list_ref}[$i]{name};
+	    my $am_pm = lc( ${$list_ref}[$i]{time} );
+	    my $types = ${$list_ref}[$i]{types};
+	    $types =~ s/, $//;
+	    $types =~ s/\s//g;
+
+		# The following is a debug statement for strange cases
+	    if ($types =~ "Albuquerque") {
+	        print "TYPE IS ALBUQUERQUE\n";
+	    }
+
+	    my $loc_code = ${$list_ref}[$i]{location};
+	    # Print to LaTeX file if meeting is not online-only
+    	if ( $online_flg == 0 || (!defined $loc_code && $loc_code ne '')) {
 	    print $laTeX_output "$am_pm	& $m_name \\textbf{\\textsc{$types}} & \\textsc{$loc_code} \\\\ \\hline\n";
-	}
+	    }
     }
-    print "--------------- end of $day meetings ---------------\n";
+print "--------------- end of $day meetings ---------------\n";
 }
 
 close ($laTeX_output);
 
-   
+
 # \hline\multicolumn{3}{|l|}{\cellcolor[HTML]{EFEFEF}\textbf{SUNDAY}}   \\\hline
 
 # \hline \multicolumn{3}{|l|}{\cellcolor[HTML]{EFEFEF}\textbf{SUNDAY}} \\ \hline
 
 sub translate_loc($loc_name) {
+    $loc_name =~ s/205 San Pedro/205/;
     $loc_name =~ s/Online-Albuquerque//;
+    $loc_name =~ s/ACS Trauma Recovery Center/acs/;
     $loc_name =~ s/Albuquerque Indian Center/aic/;
     $loc_name =~ s/Asbury Methodist Church/aum/;
     $loc_name =~ s/AsburyUnited Methodist Church/aum/;
@@ -235,6 +253,7 @@ sub translate_loc($loc_name) {
     $loc_name =~ s/1656 Bridge Blvd. SW/bri/;
     $loc_name =~ s/2300 Candelaria NE/cad/;
     $loc_name =~ s/Church of the Risen Savior/crs/;
+    $loc_name =~ s/CommonSpirit St. Joseph's/csj/;
     $loc_name =~ s/Covenant United Methodist Church/cum/;
     $loc_name =~ s/Desert Club/des/;
     $loc_name =~ s/Domenici Center/dom/;
@@ -256,17 +275,20 @@ sub translate_loc($loc_name) {
     $loc_name =~ s/Metropolitan Community Church/mcc/;
     $loc_name =~ s/Monte Vista Christian Church/mvc/;
     $loc_name =~ s/Nativity Church/nat/;
+    $loc_name =~ s/Nativity of the Blessed Virgin Mary Church/nbv/;
     $loc_name =~ s/Netherwood Park Church of Christ/npc/;
     $loc_name =~ s/Our Lady of the Valley Church/olv/;
     $loc_name =~ s/Our Savior Lutheran Church/osl/;
     $loc_name =~ s/Paws and Stripes/pas/;
     $loc_name =~ s/Plaza West, Suite F/pwf/;
     $loc_name =~ s/Rio Vista Church of the Nazarene/rcn/;
+    $loc_name =~ s/Shepherd of the Valley Presbyterian Church/svp/;
     $loc_name =~ s/St Andrew Presbyterian Church/sap/;
     $loc_name =~ s/St Michael & All Angels Episcopal Church/sma/;
     $loc_name =~ s/St Marks Episcopal/smc/;
     $loc_name =~ s/St. Mark's Episcopal Church/smc/;
     $loc_name =~ s/St Mary's Episcopal Church/sme/;
+    $loc_name =~ s/St Michael All Angels/sma/;
     $loc_name =~ s/208 San Pedro/snp/;
     $loc_name =~ s/St Johns Episcopal Cathedral/stj/;
     $loc_name =~ s/St Timothy's Lutheran Church/stl/;
@@ -283,17 +305,19 @@ sub translate_loc($loc_name) {
 
     # Outside Albuquerque codes
 
+    $loc_name =~ s/109 Faulkner Rd\./109/;
     $loc_name =~ s/Community Bible Church/cbc/;
     $loc_name =~ s/Corrales Community Center/ccc/;
     $loc_name =~ s/Community Church/cch/;
     $loc_name =~ s/Corrales Community Library/ccl/;
     $loc_name =~ s/Christian Fellowship Church Gym/cfc/;
     $loc_name =~ s/Epiphany Episcopal Church/eec/;
-    $loc_name =~ s/Full Circle Recovery/fcr/;            
+    $loc_name =~ s/Full Circle Recovery/fcr/;
     $loc_name =~ s/Holy Child Catholic Church/hct/;
     $loc_name =~ s/Holy Cross Episcopal Church/hce/;
     $loc_name =~ s/First United Methodist Church of Belen/mcb/;
     $loc_name =~ s/Good Shepherd Lutheran Church/gsl/;
+    $loc_name =~ s/Kings Cross Church/kcc/;
     $loc_name =~ s/Mountainside Methodist Church/msm/;
     $loc_name =~ s/Presbyterian Church, Placitas/ppc/;
     $loc_name =~ s/St Matthew's Episcopal Church/mec/;
@@ -302,14 +326,17 @@ sub translate_loc($loc_name) {
     $loc_name =~ s/Unitarian Universalist Church/uuc/;
     $loc_name =~ s/Wellness Center/wcl/;
     $loc_name =~ s/Woods End Church/wec/;
+    $loc_name =~ s/Zia Pueblo/Zia/;
 
-    
     return $loc_name;
 }
 
 sub translate_types($types) {
     $types =~ s/11th Step Meditation/ME/;
     $types =~ s/12 Steps & 12 Traditions/ST, T/;
+    $types =~ s/12 Steps \& 12 Traditions/ST, T/;
+    $types =~ s/12 Steps&12 Traditions/ST, T/;
+    $types =~ s/American Sign Language/SL/;
     $types =~ s/As Bill Sees It/A/;
     $types =~ s/Big Book/BB/;
     $types =~ s/Birthday/B/;
@@ -322,7 +349,7 @@ sub translate_types($types) {
     $types =~ s/Discussion/D/;
     $types =~ s/Dual Diagnosis/DD/;
     $types =~ s/English/E/;
-    $types =~ s/Fragrance Free/FF/;	
+    $types =~ s/Fragrance Free/FF/;
     $types =~ s/Gay/G/;
     $types =~ s/Grapevine/GV/;
     $types =~ s/Lesbian/L/;
@@ -346,6 +373,7 @@ sub translate_types($types) {
     $types =~ s/Spanish/S/;
     $types =~ s/Speaker/SP/;
     $types =~ s/Step Meeting/ST/;
+    $types =~ s/Step Study/ST/;
     $types =~ s/Tradition Study/T/;
     $types =~ s/Transgender/TR/;
     $types =~ s/Wheelchair Access/WA/;
